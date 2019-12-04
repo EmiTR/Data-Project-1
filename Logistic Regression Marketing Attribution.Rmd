@@ -1,0 +1,260 @@
+---
+title: "LR020718"
+author: "Emily Tran"
+date: "2 Juli 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+1, Packages
+
+```{r}
+
+library(dplyr)
+library("RPostgreSQL")
+library(magrittr)
+library(tidyverse)
+library(ggplot2)
+library(Amelia)
+library(corrplot)
+```
+
+
+2, Data Input
+Connection with the database
+NO WAY I WILL PUBLISH IT :-P
+
+Original data: onetable (27.504.638 rows)
+Time: from 01.02-40.04.2018
+```{sql connection=con}
+select count(*) from rewe_web.onetable;
+```
+
+Sample data: 
+```{sql connection=con}
+create table rewe_web.onetable_sampleid as
+select * 
+from rewe_web.onetable tablesample BERNOULLI(10)
+where visitor_id in (select distinct visitor_id from rewe_web.onetable);
+```
+
+3, Data preparation
+3.1, Cleaning
+*alread done
+```{sql connection=con}
+delete from rewe_web.onetable_sampleid where visit_binary like '0';
+delete from rewe_web.onetable_sampleid where order_binary like '1' and revenue like '0';
+delete from rewe_web.onetable_sampleid where pageview like '0' and visit_number like '1';
+delete from rewe_web.onetable_sampleid where tracking_code like '';
+```
+
+Re-formating
+*alread done
+```{sql connection=con}
+create table rewe_web.onetable_format as
+select
+  to_timestamp(daydate, 'Month DD,  YYY') AS daydate,
+  visitor_id,
+  visit_number::int,
+  pageview::int,
+  visit_binary::int,
+  order_binary::int,
+  order_id,
+  revenue::numeric,
+  split_part(tracking_code, '_', 1) AS channel,
+  split_part(tracking_code, '_', 2) AS partner,
+  visitor_id||visit_number||split_part(tracking_code, '_', 1) as visitchannel_id
+from rewe_web.onetable_sampleid;
+```
+
+3.2, Exploring
+Pull the table into R to do some quick summary 
+```{r}
+onetable_format <- dbReadTable(con, c("rewe_web","onetable_format"))
+```
+```{r}
+summary(onetable_format)
+```
+```{sql connection=con}
+select order_binary, count(*)
+from rewe_web.onetable_format
+group by order_binary;
+```
+```{sql connection=con}
+select order_binary, channel, count(*)
+from rewe_web.onetable_format
+group by order_binary, channel
+order by order_binary desc, count(*) desc;
+```
+```{sql connection=con}
+select order_binary, pageview, count(*)
+from rewe_web.onetable_format
+group by order_binary, pageview
+order by order_binary desc, count(*) desc;
+```
+```{sql connection=con}
+select order_binary, visit_number, count(*)
+from rewe_web.onetable_format
+group by order_binary, visit_number
+order by order_binary desc, count(*) desc;
+```
+```{sql connection=con}
+select order_binary, partner, count(*)
+from rewe_web.onetable_format
+group by order_binary, partner
+order by order_binary desc, count(*) desc;
+```
+
+3.3, Outliers killing
+
+Definition of extrem values:
+things that are > upper whisker =  Q_3 + 1.5 * IQR 
+things that are < lower whisker = Q_1 - 1.5 * IQR
+IQR = Q_3 - Q_1
+```{sql connection=con}
+delete from rewe_web.onetable_format where visit_number > (6 + 1.5*5);
+```
+```{sql connection=con}
+delete from rewe_web.onetable_format where pageview > (4 + 1.5*3 + 50);
+```
+3.4 Visualising
+Looking for missing values
+```{r}
+missmap(onetable_format, main = "Missing values vs observed")
+```
+```{r}
+ggplot(data = onetable_format, aes(x=onetable_format$visit_number)) + geom_histogram()
+```
+```{r}
+ggplot(data = onetable_format, aes(x=onetable_format$pageview)) + geom_histogram()
+```
+```{r}
+ggplot(onetable_format, aes( x = factor(order_binary), y = visit_number)) + scale_y_log10() +   geom_boxplot()
+```
+```{r}
+ggplot(onetable_format, aes( x = factor(order_binary), y = pageview)) + scale_y_log10() + geom_boxplot()
+```
+
+3.4 Transforming
+Take a look back
+```{sql connection=con}
+select * from rewe_web.onetable_format limit 10;
+```
+building an other table for modeling. Actually I only wanna choose 4 main channal groups.
+
+```{sql connection=con}
+create table rewe_web.onetable_model as
+select 
+  daydate,
+  visitor_id,
+  visit_number,
+  pageview,
+  order_binary,
+  revenue, 
+  channel,
+  CASE WHEN channel = 'aff' THEN 1 ELSE 0 END AS aff,
+  CASE WHEN channel = 'crm' THEN 1 ELSE 0 END AS crm,
+  CASE WHEN channel = 'dim' THEN 1 ELSE 0 END AS dim,
+  CASE WHEN channel = 'dir' THEN 1 ELSE 0 END AS dir,
+  CASE WHEN channel = 'ref' THEN 1 ELSE 0 END AS ref,
+  CASE WHEN channel = 'sea' THEN 1 ELSE 0 END AS sea,
+  CASE WHEN channel = 'seo' THEN 1 ELSE 0 END AS seo,
+  CASE WHEN channel = 'int' THEN 1 ELSE 0 END AS int_ch,
+  CASE WHEN channel = 'pla' THEN 1 ELSE 0 END AS pla,
+  CASE WHEN channel = 'som' THEN 1 ELSE 0 END AS som
+from rewe_web.onetable_format;
+```
+
+```{sql connection=con}
+select * from rewe_web.onetable_model limit 10;
+```
+```{sql connection=con}
+select visitor_id,sum()  from rewe_web.onetable_model;
+```
+*0207 nhung doan sau nay la do lam viec o nha
+
+```{r}
+onetable_training1 <- dbReadTable(con, c("rewe_web","onetable_training1"))
+```
+```{r}
+onetable_test1 <- dbReadTable(con, c("rewe_web","onetable_test1"))
+```
+
+3.5 Splitting data set
+create table rewe_web.onetable_sampleid as
+select * 
+from rewe_web.onetable tablesample BERNOULLI(10)
+where visitor_id in (select distinct visitor_id from rewe_web.onetable);
+```{sql connection=con}
+create table rewe_web.onetable_training1 as
+select * 
+from rewe_web.onetable_model tablesample BERNOULLI(75)
+where visitor_id in (select distinct visitor_id from rewe_web.onetable_model);
+```
+```{sql connection=con}
+create table rewe_web.onetable_test1 as
+select * 
+from rewe_web.onetable_model 
+where visitor_id in (select distinct visitor_id from rewe_web.onetable_model) and visitor_id not in (select distinct visitor_id from rewe_web.onetable_training1) ;
+```
+cac buoc tiep theo:
+```{r}
+onetable_test1%>%arrange(visitor_id,visit_number)
+```
+To-do: count distinct visitor_id, count distinct visitor id who bought
+```{sql connection=con}
+select count(distinct visitor_id) from rewe_web.onetable_training1;
+```
+```{sql connection=con}
+select count(distinct visitor_id) from rewe_web.onetable_training1 where order_binary = 1;
+```
+```{sql connection=con}
+select visitor_id, sum(order_binary) from rewe_web.onetable_training1 where order_binary = 1 group by visitor_id order by sum(order_binary) desc;
+```
+
+-cat CJ ra thanh sequen 
+-xem trong 1 sequen: co orders khong, co nhung channel nao, so lan pageview trung binh
+-
+
+4, Modeling
+
+neu factor(visitor_id) thi sao? Test
+model <- glm(order_binary~.- daydate + factor(visitor_id) - channel, data = onetable_training1, family = "binomial")
+```{r}
+model <- glm(order_binary~.- daydate + factor(visitor_id) - channel, data = onetable_training1, family = "binomial")
+```
+```{r}
+augment(model)
+```
+```{r}
+exp(coef(model))
+```
+```{r}
+augment(model, type.predict = "response")
+```
+why...
+```{r}
+augment(model, newdata = onetable_test1, type.predict = "response")
+```
