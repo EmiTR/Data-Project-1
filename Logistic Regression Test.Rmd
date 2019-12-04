@@ -1,0 +1,118 @@
+---
+title: "Logistic Regression Attribution"
+author: "Emily"
+date: "9 Juli 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+The idea of LR attribution is to classify the customers/visitors to converted and not-converted classes based on their channel interactions. Estimate the credit distribused based on the model's coefficients.
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+1, Packages
+```{r}
+library(dplyr)
+library(ggplot2)
+library(magrittr)
+```
+2, Data
+we need at least dataset with visitor_id, channel, count des Touch with channel, visit_number, order_binary and path of conversions
+
+```{r}
+data_path_LR <- training_small %>%
+ group_by(visitor_id, visit_number) %>%
+ mutate(path_no = ifelse(is.na(lag(cumsum(order_binary))), 0, lag(cumsum(order_binary))) + 1) %>%
+ select(- partner, - revenue)
+```
+```{r}
+data_path_LR <- data_path_LR %>%
+ mutate(dummy_sea = ifelse(channel == 'sea', 1, 0),
+        dummy_crm = ifelse(channel == 'crm', 1, 0),
+        dummy_ref = ifelse(channel == 'ref', 1, 0),
+        dummy_seo = ifelse(channel == 'seo', 1, 0),
+        dummy_aff = ifelse(channel == 'aff', 1, 0),
+        dummy_som = ifelse(channel == 'som', 1, 0),
+        dummy_int = ifelse(channel == 'int', 1, 0),
+        dummy_ret = ifelse(channel == 'ret', 1, 0),
+        dummy_dim = ifelse(channel == 'dim', 1, 0),
+        dummy_ooh = ifelse(channel == 'ooh', 1, 0),
+        dummy_pla = ifelse(channel == 'pla', 1, 0),
+        dummy_app = ifelse(channel == 'app', 1, 0),
+        dummy_cop = ifelse(channel == 'cop', 1, 0),
+        dummy_pos = ifelse(channel == 'pos', 1, 0),
+        dummy_et  = ifelse(channel == 'et', 1, 0),
+        dummy_red = ifelse(channel == 'red', 1, 0),
+        dummy_hzl = ifelse(channel == 'ref', 1, 0)
+        ) #here there is a need to identify the channels automatically and use a loop to creat this dataset. 
+```
+now we have to cut CJ in to consequences
+```{r}
+data_path_LR%>%
+  group_by(visitor_id, path_no)%>%
+  summarise(count_visit = n(),
+            average_pageview = (sum(pageview)/n()),
+            order_binary = sum(order_binary)
+            )
+```
+```{r}
+data_LR <- data_path_LR%>%
+  group_by(visitor_id, path_no)%>%
+  summarise(count_visit = n(),
+            average_pageview = (sum(pageview)/n()),
+            order_binary = ifelse(sum(order_binary) > 0, 1, 0),
+            sum_sea = sum(dummy_sea),
+            sum_crm = sum(dummy_crm),
+            sum_ref = sum(dummy_ref),
+            sum_seo = sum(dummy_seo),
+            sum_aff = sum(dummy_aff),
+            sum_som = sum(dummy_som),
+            sum_int = sum(dummy_int),
+            sum_ret = sum(dummy_ret),
+            sum_dim = sum(dummy_dim),
+            sum_ooh = sum(dummy_ooh),
+            sum_pla = sum(dummy_pla),
+            sum_app = sum(dummy_app),
+            sum_cop = sum(dummy_cop),
+            sum_pos = sum(dummy_pos),
+            sum_et = sum(dummy_et),
+            sum_red = sum(dummy_red),
+            sum_hzl = sum(dummy_hzl))
+```
+```{r}
+LR_model <- glm(order_binary~ . - average_pageview - visitor_id - path_no, family = binomial, data = data_LR)
+```
+```{r}
+summary(LR_model)
+```
+Problem: there too many path with null conversions! there are to many channels with no conversion and mini visits.
+Lösung: group channels? do it with null_con and conveterd?
+```{r}
+augment(LR_model)
+```
+```{r}
+exp(coef(LR_model))
+```
+
+
+

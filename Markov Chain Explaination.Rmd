@@ -1,0 +1,213 @@
+---
+title: "MC with real data"
+author: "Emily"
+date: "9 Juli 2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+About Markov Chain:
+Using Markov chains allow us to switch from heuristic models to probabilistic ones. We can represent every customer journey (sequence of channels/touchpoints) as a chain in a directed Markov graph where each vertex is a possible state (channel/touchpoint) and the edges represent the probability of transition between the states (including conversion.) By computing the model and estimating transition probabilities we can attribute every channel/touchpoint.
+
+Let's assume we have three customer journeys:
+
+C1 -> C2 -> C3 -> purchase
+
+C1 -> unsuccessful conversion
+
+C2 -> C3 -> unsuccessful conversion
+
+C1, C2, C3 (at different stages) - are called transition states, while the probability of moving from one channel to another channel is called transition probability.
+
+To estimate the attribution of each channel/touchpoint, we will use removal effect. The main idea is:
+
+if we obtain N conversions without a certain channel/touchpoint compared to total conversions T of the complete model, that means the channel reflects the change in total conversions (or value). After all, channels/touchpoints are estimated: we have to weight them because the total sum of (T - Ni) would be bigger than T and normally it is.
+
+Another effective way to measure the Removal Effect is in percentages e.g. the channel affected conversion probabilities by X %.
+
+P(Conversion after removing C1) = P(C2 -> C3 -> Convert)
+
+1, Packages
+```{r}
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(ChannelAttribution)
+library(markovchain)
+library(magrittr)
+```
+https://www.statmethods.net/advstats/glm.html
+
+2, Data
+
+We have to prepare the data as input for Markov Chain. The optimal data sets contains of following columns: Customer_id, path, order_binary
+
+Cutting CJ into sequences: 
+C1 -> C4 -> C2 -> C3 -> conversion (first purchase) -> C2 -> C3 -> conversion (second purchase) -> C3 -> conversion (third purchase) -> C5.
+We can split it like this:
+a) C1 -> C4 -> C2 -> C3 -> conversion (first purchase),
+b) C2 -> C3 -> conversion (second purchase),
+c) C3 -> conversion (third purchase),
+d) C5
+```{r}
+data_paths <- training_small %>%
+ group_by(visitor_id) %>%
+ mutate(path_no = ifelse(is.na(lag(cumsum(order_binary))), 0, lag(cumsum(order_binary))) + 1) %>%
+ ungroup()
+```
+
+It makes sense to attribute paths of the first purchase and of the n-th purchase separately.
+```{r}
+data_paths_firstbuy <- data_paths %>%
+ filter(path_no == 1) %>%
+ select(-path_no)
+```
+It makes sense to replace or remove some channels when:
+1) the marketing channel is unknown (no-campaign-cookie) due to variety of reasons
+2) there is a specific channel in the path that we don't want to attribute such as Direct channel.
+```{r}
+data_paths_firstbuy <-data_paths_firstbuy %>%
+  mutate(channel = ifelse(channel == 'no-campaign-cookie', NA, channel))
+```
+```{r}
+# replace some channels - dir and NA (no-campaign-cookie)
+data_firstbuy_clean <- data_paths_firstbuy %>%
+ # removing NAs
+ filter(!is.na(channel)) %>%
+  
+ # adding order of channels in the path
+ group_by(visitor_id) %>%
+ mutate(ord = c(1:n()),
+ is_non_direct = ifelse(channel == 'dir', 0, 1),
+ is_non_direct_cum = cumsum(is_non_direct)) %>%
+  
+ # removing Direct (channel_6) when it is the first in the path
+ filter(is_non_direct_cum != 0) %>%
+  
+ # replacing Direct (channel_6) with the previous touch point
+ mutate(channel = ifelse(channel == 'dir', channel[which(channel != 'dir')][is_non_direct_cum], channel)) %>%
+  
+ ungroup() %>%
+ select(-ord, -is_non_direct, -is_non_direct_cum)
+```
+
+Removing one-channel path (dir-> conversion or seo -> conversion)
+```{r}
+#marking one-channel path with T or F
+data_firstbuy_clean <- data_firstbuy_clean %>%
+ group_by(visitor_id) %>%
+ mutate(uniq_channel_tag = ifelse(length(unique(channel)) == 1, TRUE, FALSE)) %>%
+ ungroup()
+```
+Then removing all the one-channel paths
+```{r}
+data_firstbuy_clean_multi <- data_firstbuy_clean %>%
+ filter(uniq_channel_tag == FALSE) %>%
+ select(-uniq_channel_tag)
+```
+```{r}
+data_multi <- data_firstbuy_clean_multi %>%
+ group_by(visitor_id) %>%
+ summarise(path = paste(channel, collapse = ' > '),
+ conversion = sum(order_binary),
+ con_null = ifelse(conversion != 0, 0, 1)) %>%
+ ungroup()
+ 
+model1 <- markov_model(data_multi,
+ var_path = 'path',
+ var_conv = 'conversion',
+ var_null = 'con_null',
+ out_more = TRUE)
+model1$removal_effects
+model1$result
+```
+
+Now I'll do the same for multi conversions
+```{r}
+data_paths_repeatbuy <- data_paths %>%
+ filter(path_no > 1) %>%
+ select(-path_no)
+
+data_paths_repeatbuy <-data_paths_repeatbuy %>%
+  mutate(channel = ifelse(channel == 'no-campaign-cookie', NA, channel))
+```
+```{r}
+# replace some channels - dir and NA (no-campaign-cookie)
+data_repeatbuy_clean <- data_paths_repeatbuy %>%
+ # removing NAs
+ filter(!is.na(channel)) %>%
+  
+ # adding order of channels in the path
+ group_by(visitor_id) %>%
+ mutate(ord = c(1:n()),
+ is_non_direct = ifelse(channel == 'dir', 0, 1),
+ is_non_direct_cum = cumsum(is_non_direct)) %>%
+  
+ # removing Direct (channel_6) when it is the first in the path
+ filter(is_non_direct_cum != 0) %>%
+  
+ # replacing Direct (channel_6) with the previous touch point
+ mutate(channel = ifelse(channel == 'dir', channel[which(channel != 'dir')][is_non_direct_cum], channel)) %>%
+  
+ ungroup() %>%
+ select(-ord, -is_non_direct, -is_non_direct_cum)
+```
+
+Removing one-channel path (dir-> conversion or seo -> conversion)
+```{r}
+#marking one-channel path with T or F
+data_repeatbuy_clean <- data_repeatbuy_clean %>%
+ group_by(visitor_id) %>%
+ mutate(uniq_channel_tag = ifelse(length(unique(channel)) == 1, TRUE, FALSE)) %>%
+ ungroup()
+```
+Then removing all the one-channel paths
+```{r}
+data_repeatbuy_clean_multi <- data_repeatbuy_clean %>%
+ filter(uniq_channel_tag == FALSE) %>%
+ select(-uniq_channel_tag)
+```
+```{r}
+data_repeatbuy_multi <- data_repeatbuy_clean_multi %>%
+ group_by(visitor_id) %>%
+ summarise(path = paste(channel, collapse = ' > '),
+ conversion = sum(order_binary),
+ con_null = ifelse(conversion != 0, 0, 1)) %>%
+ ungroup()
+ 
+model2 <- markov_model(data_repeatbuy_multi,
+ var_path = 'path',
+ var_conv = 'conversion',
+ var_null = 'con_null',
+ out_more = TRUE)
+model2$removal_effects
+model2$result
+
+
+```
+
