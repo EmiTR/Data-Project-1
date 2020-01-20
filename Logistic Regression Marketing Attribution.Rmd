@@ -54,26 +54,26 @@ select count(*) from rewe_web.onetable;
 
 Sample data: 
 ```{sql connection=con}
-create table rewe_web.onetable_sampleid as
+create table company_web.onetable_sampleid as
 select * 
-from rewe_web.onetable tablesample BERNOULLI(10)
-where visitor_id in (select distinct visitor_id from rewe_web.onetable);
+from company.onetable tablesample BERNOULLI(10)
+where visitor_id in (select distinct visitor_id from company.onetable);
 ```
 
 3, Data preparation
 3.1, Cleaning
 *alread done
 ```{sql connection=con}
-delete from rewe_web.onetable_sampleid where visit_binary like '0';
-delete from rewe_web.onetable_sampleid where order_binary like '1' and revenue like '0';
-delete from rewe_web.onetable_sampleid where pageview like '0' and visit_number like '1';
-delete from rewe_web.onetable_sampleid where tracking_code like '';
+delete from company.onetable_sampleid where visit_binary like '0';
+delete from company.onetable_sampleid where order_binary like '1' and revenue like '0';
+delete from company.onetable_sampleid where pageview like '0' and visit_number like '1';
+delete from company.onetable_sampleid where tracking_code like '';
 ```
 
 Re-formating
 *alread done
 ```{sql connection=con}
-create table rewe_web.onetable_format as
+create table company.onetable_format as
 select
   to_timestamp(daydate, 'Month DD,  YYY') AS daydate,
   visitor_id,
@@ -86,43 +86,43 @@ select
   split_part(tracking_code, '_', 1) AS channel,
   split_part(tracking_code, '_', 2) AS partner,
   visitor_id||visit_number||split_part(tracking_code, '_', 1) as visitchannel_id
-from rewe_web.onetable_sampleid;
+from company.onetable_sampleid;
 ```
 
 3.2, Exploring
 Pull the table into R to do some quick summary 
 ```{r}
-onetable_format <- dbReadTable(con, c("rewe_web","onetable_format"))
+onetable_format <- dbReadTable(con, c("company","onetable_format"))
 ```
 ```{r}
 summary(onetable_format)
 ```
 ```{sql connection=con}
 select order_binary, count(*)
-from rewe_web.onetable_format
+from company.onetable_format
 group by order_binary;
 ```
 ```{sql connection=con}
 select order_binary, channel, count(*)
-from rewe_web.onetable_format
+from company.onetable_format
 group by order_binary, channel
 order by order_binary desc, count(*) desc;
 ```
 ```{sql connection=con}
 select order_binary, pageview, count(*)
-from rewe_web.onetable_format
+from company.onetable_format
 group by order_binary, pageview
 order by order_binary desc, count(*) desc;
 ```
 ```{sql connection=con}
 select order_binary, visit_number, count(*)
-from rewe_web.onetable_format
+from company.onetable_format
 group by order_binary, visit_number
 order by order_binary desc, count(*) desc;
 ```
 ```{sql connection=con}
 select order_binary, partner, count(*)
-from rewe_web.onetable_format
+from company.onetable_format
 group by order_binary, partner
 order by order_binary desc, count(*) desc;
 ```
@@ -134,10 +134,10 @@ things that are > upper whisker =  Q_3 + 1.5 * IQR
 things that are < lower whisker = Q_1 - 1.5 * IQR
 IQR = Q_3 - Q_1
 ```{sql connection=con}
-delete from rewe_web.onetable_format where visit_number > (6 + 1.5*5);
+delete from company.onetable_format where visit_number > (6 + 1.5*5);
 ```
 ```{sql connection=con}
-delete from rewe_web.onetable_format where pageview > (4 + 1.5*3 + 50);
+delete from company.onetable_format where pageview > (4 + 1.5*3 + 50);
 ```
 3.4 Visualising
 Looking for missing values
@@ -160,12 +160,12 @@ ggplot(onetable_format, aes( x = factor(order_binary), y = pageview)) + scale_y_
 3.4 Transforming
 Take a look back
 ```{sql connection=con}
-select * from rewe_web.onetable_format limit 10;
+select * from company.onetable_format limit 10;
 ```
 building an other table for modeling. Actually I only wanna choose 4 main channal groups.
 
 ```{sql connection=con}
-create table rewe_web.onetable_model as
+create table company.onetable_model as
 select 
   daydate,
   visitor_id,
@@ -184,40 +184,40 @@ select
   CASE WHEN channel = 'int' THEN 1 ELSE 0 END AS int_ch,
   CASE WHEN channel = 'pla' THEN 1 ELSE 0 END AS pla,
   CASE WHEN channel = 'som' THEN 1 ELSE 0 END AS som
-from rewe_web.onetable_format;
+from company.onetable_format;
 ```
 
 ```{sql connection=con}
-select * from rewe_web.onetable_model limit 10;
+select * from company.onetable_model limit 10;
 ```
 ```{sql connection=con}
-select visitor_id,sum()  from rewe_web.onetable_model;
+select visitor_id,sum()  from company.onetable_model;
 ```
 *0207 nhung doan sau nay la do lam viec o nha
 
 ```{r}
-onetable_training1 <- dbReadTable(con, c("rewe_web","onetable_training1"))
+onetable_training1 <- dbReadTable(con, c("company","onetable_training1"))
 ```
 ```{r}
-onetable_test1 <- dbReadTable(con, c("rewe_web","onetable_test1"))
+onetable_test1 <- dbReadTable(con, c("company","onetable_test1"))
 ```
 
 3.5 Splitting data set
-create table rewe_web.onetable_sampleid as
+create table company.onetable_sampleid as
 select * 
-from rewe_web.onetable tablesample BERNOULLI(10)
+from company.onetable tablesample BERNOULLI(10)
 where visitor_id in (select distinct visitor_id from rewe_web.onetable);
 ```{sql connection=con}
-create table rewe_web.onetable_training1 as
+create table company.onetable_training1 as
 select * 
-from rewe_web.onetable_model tablesample BERNOULLI(75)
-where visitor_id in (select distinct visitor_id from rewe_web.onetable_model);
+from company.onetable_model tablesample BERNOULLI(75)
+where visitor_id in (select distinct visitor_id from company.onetable_model);
 ```
 ```{sql connection=con}
-create table rewe_web.onetable_test1 as
+create table company.onetable_test1 as
 select * 
-from rewe_web.onetable_model 
-where visitor_id in (select distinct visitor_id from rewe_web.onetable_model) and visitor_id not in (select distinct visitor_id from rewe_web.onetable_training1) ;
+from company.onetable_model 
+where visitor_id in (select distinct visitor_id from company.onetable_model) and visitor_id not in (select distinct visitor_id from company.onetable_training1) ;
 ```
 cac buoc tiep theo:
 ```{r}
@@ -225,13 +225,13 @@ onetable_test1%>%arrange(visitor_id,visit_number)
 ```
 To-do: count distinct visitor_id, count distinct visitor id who bought
 ```{sql connection=con}
-select count(distinct visitor_id) from rewe_web.onetable_training1;
+select count(distinct visitor_id) from company.onetable_training1;
 ```
 ```{sql connection=con}
-select count(distinct visitor_id) from rewe_web.onetable_training1 where order_binary = 1;
+select count(distinct visitor_id) from company.onetable_training1 where order_binary = 1;
 ```
 ```{sql connection=con}
-select visitor_id, sum(order_binary) from rewe_web.onetable_training1 where order_binary = 1 group by visitor_id order by sum(order_binary) desc;
+select visitor_id, sum(order_binary) from company.onetable_training1 where order_binary = 1 group by visitor_id order by sum(order_binary) desc;
 ```
 
 -cat CJ ra thanh sequen 
